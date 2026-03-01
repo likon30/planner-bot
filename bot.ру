@@ -303,24 +303,25 @@ async def save_timezone(message: Message, state: FSMContext):
         reply_markup=main_menu()
     )
 
-@dp.message(StateFilter(None))
-async def view_period(message: Message):
-    text = message.text
 
-    if text == "Сегодня":
-        now = await get_user_now(message.from_user.id)
-        await send_dashboard(message.from_user.id, now.date().isoformat())
-        return
+@dp.message(F.text == "📅 Мои задачи", StateFilter(None))
+    now = await get_user_now(message.from_user.id)
+    await send_dashboard(message.from_user.id, now.date().isoformat())
+    return
+@dp.message(F.text == "Сегодня", StateFilter(None))
+    now = await get_user_now(message.from_user.id)
+    await send_dashboard(message.from_user.id, now.date().isoformat())
+    return
 
-    if text == "Завтра":
-        now = await get_user_now(message.from_user.id)
-        await send_dashboard(message.from_user.id, (now.date() + timedelta(days=1)).isoformat())
-        return
+@dp.message(F.text == "Завтра", StateFilter(None))
+    now = await get_user_now(message.from_user.id)
+    await send_dashboard(message.from_user.id, (now.date() + timedelta(days=1)).isoformat())
+    return
 
-    if text == "Неделя":
-        now = await get_user_now(message.from_user.id)
-        await send_dashboard(message.from_user.id, (now.date() + timedelta(days=7)).isoformat())
-        return
+@dp.message(F.text == "Неделя", StateFilter(None))
+    now = await get_user_now(message.from_user.id)
+    await send_dashboard(message.from_user.id, (now.date() + timedelta(days=7)).isoformat())
+    return
 
 
 @dp.message(F.text == "🔙 Назад")
@@ -540,12 +541,6 @@ async def delete_all_tasks(callback: CallbackQuery):
 
 # ================= ADD TASK =================
 
-@dp.message(F.text == "➕ Добавить задачу")
-async def add_start(message: Message, state: FSMContext):
-    await state.set_state(AddTask.choosing_day)
-    await message.answer("Выберите день:", reply_markup=day_menu())
-
-
 @dp.message(AddTask.choosing_day)
 async def choose_day_add(message: Message, state: FSMContext):
     now = await get_user_now(message.from_user.id)
@@ -566,6 +561,11 @@ async def choose_day_add(message: Message, state: FSMContext):
     await send_dashboard(message.from_user.id, now.date().isoformat())
     await state.set_state(AddTask.waiting_text)
     await message.answer("Введите текст задачи:", reply_markup=None)
+
+@dp.message(F.text == "➕ Добавить задачу")
+async def add_start(message: Message, state: FSMContext):
+    await state.set_state(AddTask.choosing_day)
+    await message.answer("Выберите день:", reply_markup=day_menu())
 
 
 @dp.message(AddTask.waiting_text)
@@ -1068,6 +1068,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
