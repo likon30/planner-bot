@@ -1,0 +1,978 @@
+import asyncio
+import uuid
+from datetime import datetime, timedelta
+
+import aiosqlite
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import (
+    Message,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
+)
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+
+TOKEN = "8231045881:AAHU8YyqJoz2G_ukMPF-bkRTin3tM9sF214"
+
+bot = Bot(TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+
+DB_NAME = "/data/planner.db"
+
+
+# ================= DATABASE =================
+
+async def init_db():
+    print("INIT DB START")
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            remind_before INTEGER DEFAULT 10,
+	    morning_time TEXT DEFAULT '09:00',
+            evening_time TEXT DEFAULT '21:00'
+        )
+        """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER,
+            text TEXT,
+            date TEXT,
+            time TEXT,
+            done INTEGER DEFAULT 0,
+            is_main INTEGER DEFAULT 0,
+            notified INTEGER DEFAULT 0,
+            warned INTEGER DEFAULT 0
+        )
+        """)
+
+        await db.commit()
+
+    print("INIT DB DONE")
+
+
+# ================= MENU =================
+
+def main_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📅 Мои задачи")],
+            [KeyboardButton(text="➕ Добавить задачу")],
+            [KeyboardButton(text="⚙️ Настройки")]
+        ],
+        resize_keyboard=True
+    )
+
+
+def view_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Сегодня")],
+            [KeyboardButton(text="Завтра")],
+            [KeyboardButton(text="Неделя")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+
+def day_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📍 Сегодня")],
+            [KeyboardButton(text="📍 Завтра")],
+            [KeyboardButton(text="📍 На неделю")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+
+def remind_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⏰ Да")],
+            [KeyboardButton(text="Без времени")]
+        ],
+        resize_keyboard=True
+    )
+def settings_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⏰ Время уведомления")],
+            [KeyboardButton(text="☀️ Утренний отчёт")],
+            [KeyboardButton(text="🌙 Вечерний отчёт")],
+            [KeyboardButton(text="🌙 Отчёт сейчас")],
+            [KeyboardButton(text="📅 Недельный отчёт сейчас")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+
+def remind_time_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="5 минут"),
+             KeyboardButton(text="10 минут")],
+            [KeyboardButton(text="20 минут"),
+             KeyboardButton(text="30 минут")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
+def evening_time_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="20:00"),
+             KeyboardButton(text="21:00")],
+            [KeyboardButton(text="22:00"),
+             KeyboardButton(text="23:00")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
+def morning_time_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="08:00"),
+             KeyboardButton(text="09:00")],
+            [KeyboardButton(text="10:00"),
+             KeyboardButton(text="11:00")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
+# ================= FSM =================
+
+class AddTask(StatesGroup):
+    choosing_day = State()
+    waiting_text = State()
+    ask_time = State()
+    waiting_time = State()
+
+
+# ================= START =================
+
+@dp.message(Command("start"))
+async def start(message: Message):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO users (id) VALUES (?)",
+            (message.from_user.id,)
+        )
+        await db.commit()
+
+    await message.answer("Planner v1.3 запущен 👌", reply_markup=main_menu())
+
+
+# ================= DASHBOARD =================
+
+async def render_dashboard(user_id, target_date):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("""
+            SELECT id, text, done, is_main, time
+            FROM tasks
+            WHERE user_id=? AND date=date(?)
+            ORDER BY is_main DESC, done ASC
+        """, (user_id, target_date)) as cur:
+            tasks = await cur.fetchall()
+
+    divider = "───────────────"
+    text = divider + "\n"
+    text += f"{target_date}\n\n"
+
+    if not tasks:
+        text += "Задач нет.\n"
+        text += divider
+        return text, None
+
+    total = len(tasks)
+    done = sum(t[2] for t in tasks)
+    percent = int((done / total) * 100)
+    bar = "█" * (percent // 10) + "░" * (10 - percent // 10)
+
+    text += f"Прогресс\n{bar} {percent}%\n\n"
+
+    keyboard = []
+    index = 1
+
+    for task_id, task_text, done_flag, is_main, task_time in tasks:
+        mark = "✓" if done_flag else "☐"
+        star = "⭐ " if is_main else ""
+        time_prefix = f"{task_time} " if task_time else ""
+
+        text += f"{index}. {mark} {time_prefix}{star}{task_text}\n"
+
+        if not done_flag and target_date == datetime.now().date().isoformat():
+            keyboard.append([
+                InlineKeyboardButton(text=f"{index} ✅", callback_data=f"done_{task_id}"),
+                InlineKeyboardButton(text=f"{index} ⭐", callback_data=f"main_{task_id}"),
+                InlineKeyboardButton(text=f"{index} 🗑", callback_data=f"delete_{task_id}")
+            ])
+
+        index += 1
+
+    text += divider
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard) if keyboard else None
+    return text, reply_markup
+
+
+async def send_dashboard(chat_id, target_date):
+    text, markup = await render_dashboard(chat_id, target_date)
+    await bot.send_message(chat_id, text, reply_markup=markup)
+
+
+# ================= VIEW =================
+
+@dp.message(F.text == "📅 Мои задачи")
+async def choose_view(message: Message):
+    await message.answer("Выберите период:", reply_markup=view_menu())
+
+
+@dp.message(F.text == "Сегодня")
+async def view_today(message: Message):
+    await send_dashboard(message.from_user.id, datetime.now().date().isoformat())
+
+
+@dp.message(F.text == "Завтра")
+async def view_tomorrow(message: Message):
+    await send_dashboard(message.from_user.id, (datetime.now().date() + timedelta(days=1)).isoformat())
+
+
+@dp.message(F.text == "Неделя")
+async def view_week(message: Message):
+    await send_dashboard(message.from_user.id, (datetime.now().date() + timedelta(days=7)).isoformat())
+
+
+@dp.message(F.text == "🔙 Назад")
+async def back_to_main(message: Message):
+    await message.answer("Главное меню", reply_markup=main_menu())
+
+@dp.message(F.text == "⚙️ Настройки")
+async def open_settings(message: Message):
+    await message.answer(
+        "Настройки:",
+        reply_markup=settings_menu()
+    )
+@dp.message(F.text == "⏰ Время уведомления")
+async def open_remind_settings(message: Message):
+    await message.answer(
+        "За сколько минут предупреждать?",
+        reply_markup=remind_time_menu()
+    )
+
+@dp.message(F.text.in_(["5 минут", "10 минут", "20 минут", "30 минут"]))
+async def set_remind_time(message: Message):
+    minutes = int(message.text.split()[0])
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE users SET remind_before=? WHERE id=?",
+            (minutes, message.from_user.id)
+        )
+        await db.commit()
+
+    await message.answer(
+        f"Теперь напоминание за {minutes} минут 👌",
+        reply_markup=main_menu()
+    )
+@dp.message(F.text == "☀️ Утренний отчёт")
+async def open_morning_settings(message: Message):
+    await message.answer(
+        "Во сколько отправлять утренний отчёт?",
+        reply_markup=morning_time_menu()
+    )
+@dp.message(
+    F.text.in_(["08:00", "09:00", "10:00", "11:00"]),
+    StateFilter(None)
+)
+async def set_morning_time(message: Message):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE users SET morning_time=? WHERE id=?",
+            (message.text, message.from_user.id)
+        )
+        await db.commit()
+
+    await message.answer(
+        f"Утренний отчёт будет в {message.text} ☀️",
+        reply_markup=main_menu()
+    )
+@dp.message(F.text == "🌙 Вечерний отчёт")
+async def open_evening_settings(message: Message):
+    await message.answer(
+        "Во сколько отправлять вечерний отчёт?",
+        reply_markup=evening_time_menu()
+    )
+@dp.message(
+    F.text.in_(["20:00", "21:00", "22:00", "23:00"]),
+    StateFilter(None)
+)
+async def set_evening_time(message: Message):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE users SET evening_time=? WHERE id=?",
+            (message.text, message.from_user.id)
+        )
+        await db.commit()
+
+    await message.answer(
+        f"Вечерний отчёт будет в {message.text} 🌙",
+        reply_markup=main_menu()
+    )
+@dp.message(F.text == "🌙 Отчёт сейчас")
+async def manual_evening_report(message: Message):
+    await send_evening_report_for_user(message.from_user.id)
+@dp.message(F.text == "📅 Недельный отчёт сейчас")
+async def manual_weekly_report(message: Message):
+    await send_weekly_report_for_user(message.from_user.id)
+# ================= CALLBACKS =================
+
+@dp.callback_query(F.data.startswith("done_"))
+async def mark_done(callback: CallbackQuery):
+    task_id = callback.data.split("_")[1]
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE tasks SET done=1 WHERE id=?", (task_id,))
+        await db.commit()
+
+    await callback.answer("Отмечено")
+    await callback.message.delete()
+    await send_dashboard(
+        callback.from_user.id,
+        datetime.now().date().isoformat()
+    )
+
+
+@dp.callback_query(F.data.startswith("main_"))
+async def set_main(callback: CallbackQuery):
+    task_id = callback.data.split("_")[1]
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE tasks SET is_main=0 WHERE user_id=?",
+            (callback.from_user.id,)
+        )
+        await db.execute(
+            "UPDATE tasks SET is_main=1 WHERE id=?",
+            (task_id,)
+        )
+        await db.commit()
+
+    await callback.answer("Главная назначена ⭐")
+    await callback.message.delete()
+    await send_dashboard(
+        callback.from_user.id,
+        datetime.now().date().isoformat()
+    )
+
+
+@dp.callback_query(F.data.startswith("delete_"))
+async def ask_delete(callback: CallbackQuery):
+    task_id = callback.data.split("_")[1]
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Да, удалить",
+                    callback_data=f"confirm_{task_id}"
+                ),
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data="cancel_delete"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.answer(
+        "Удалить задачу?",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("confirm_"))
+async def confirm_delete(callback: CallbackQuery):
+    task_id = callback.data.split("_")[1]
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "DELETE FROM tasks WHERE id=?",
+            (task_id,)
+        )
+        await db.commit()
+
+    await callback.answer("Удалено 🗑")
+    await callback.message.delete()
+    await send_dashboard(
+        callback.from_user.id,
+        datetime.now().date().isoformat()
+    )
+
+
+@dp.callback_query(F.data == "cancel_delete")
+async def cancel_delete(callback: CallbackQuery):
+    await callback.answer("Отменено")
+    await callback.message.delete()
+@dp.callback_query(F.data.startswith("move_"))
+async def move_task(callback: CallbackQuery):
+    task_id = callback.data.split("_")[1]
+    tomorrow = (datetime.now().date() + timedelta(days=1)).isoformat()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE tasks SET date=? WHERE id=?",
+            (tomorrow, task_id)
+        )
+        await db.commit()
+
+    await callback.answer("Перенесено на завтра ✅")
+    await callback.message.delete()
+@dp.callback_query(F.data == "move_all")
+async def move_all_tasks(callback: CallbackQuery):
+    tomorrow = (datetime.now().date() + timedelta(days=1)).isoformat()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            UPDATE tasks
+            SET date=?
+            WHERE user_id=? AND date=? AND done=0
+        """, (tomorrow, callback.from_user.id, datetime.now().date().isoformat()))
+        await db.commit()
+
+    await callback.answer("Все задачи перенесены ✅")
+    await callback.message.delete()
+
+
+@dp.callback_query(F.data == "delete_all")
+async def delete_all_tasks(callback: CallbackQuery):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            DELETE FROM tasks
+            WHERE user_id=? AND date=? AND done=0
+        """, (callback.from_user.id, datetime.now().date().isoformat()))
+        await db.commit()
+
+    await callback.answer("Все задачи удалены 🗑")
+    await callback.message.delete()
+
+# ================= ADD TASK =================
+
+@dp.message(F.text == "➕ Добавить задачу")
+async def add_start(message: Message, state: FSMContext):
+    await state.set_state(AddTask.choosing_day)
+    await message.answer("Выберите день:", reply_markup=day_menu())
+
+
+@dp.message(AddTask.choosing_day)
+async def choose_day_add(message: Message, state: FSMContext):
+    today = datetime.now().date()
+
+    if message.text == "📍 Сегодня":
+        selected_date = today
+    elif message.text == "📍 Завтра":
+        selected_date = today + timedelta(days=1)
+    elif message.text == "📍 На неделю":
+        selected_date = today + timedelta(days=7)
+    else:
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_menu())
+        return
+
+    await state.update_data(date=selected_date.isoformat())
+    await state.set_state(AddTask.waiting_text)
+    await message.answer("Введите текст задачи:", reply_markup=None)
+
+
+@dp.message(AddTask.waiting_text)
+async def save_text(message: Message, state: FSMContext):
+    await state.update_data(text=message.text)
+    await state.set_state(AddTask.ask_time)
+    await message.answer("Добавить напоминание ко времени?", reply_markup=remind_menu())
+
+
+@dp.message(AddTask.ask_time)
+async def handle_time_choice(message: Message, state: FSMContext):
+
+    if message.text == "Без времени":
+        data = await state.get_data()
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "INSERT INTO tasks (id, user_id, text, date) VALUES (?, ?, ?, ?)",
+                (str(uuid.uuid4()), message.from_user.id, data["text"], data["date"])
+            )
+            await db.commit()
+
+        await state.clear()  # 🔥 обязательно очищаем состояние
+
+        await message.answer(
+            "Задача добавлена без времени 👌",
+            reply_markup=main_menu()
+        )
+        return  # 🔥 важно остановить выполнение
+
+    if message.text == "⏰ Да":
+        await state.set_state(AddTask.waiting_time)
+        await message.answer("Введите время HH:MM")
+
+
+@dp.message(AddTask.waiting_time)
+async def save_with_time(message: Message, state: FSMContext):
+    try:
+        datetime.strptime(message.text, "%H:%M")
+    except:
+        await message.answer("Формат HH:MM")
+        return
+
+    data = await state.get_data()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO tasks (id, user_id, text, date, time) VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), message.from_user.id, data["text"], data["date"], message.text)
+        )
+        await db.commit()
+
+    await state.clear()
+    await message.answer("Задача добавлена ⏰", reply_markup=main_menu())
+
+
+# ================= REMINDERS =================
+
+async def check_reminders():
+    now = datetime.now()
+    current_date = now.date().isoformat()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("""
+            SELECT id, user_id, text, time, warned, notified
+            FROM tasks
+            WHERE date=? AND time IS NOT NULL AND done=0
+        """, (current_date,)) as cur:
+            tasks = await cur.fetchall()
+
+        for task_id, user_id, text, task_time, warned, notified in tasks:
+
+            # Получаем настройку пользователя
+            async with db.execute(
+                "SELECT remind_before FROM users WHERE id=?",
+                (user_id,)
+            ) as cur2:
+                row = await cur2.fetchone()
+                remind_before = row[0] if row else 10
+
+            task_datetime = datetime.strptime(
+                f"{current_date} {task_time}",
+                "%Y-%m-%d %H:%M"
+            )
+
+            # 🔔 Предупреждение
+            if not warned and now >= task_datetime - timedelta(minutes=remind_before):
+                await bot.send_message(
+                    user_id,
+                    f"🔔 Через {remind_before} минут:\n{text}"
+                )
+                await db.execute(
+                    "UPDATE tasks SET warned=1 WHERE id=?",
+                    (task_id,)
+                )
+
+            # ⏰ Основное напоминание
+            if not notified and now >= task_datetime:
+                await bot.send_message(
+                    user_id,
+                    f"⏰ Напоминание:\n{text}"
+                )
+                await db.execute(
+                    "UPDATE tasks SET notified=1 WHERE id=?",
+                    (task_id,)
+                )
+
+        await db.commit()
+
+async def reminder_loop():
+    # даём базе точно создаться
+    await asyncio.sleep(2)
+
+    while True:
+        try:
+            await check_reminders()
+        except Exception as e:
+            print("Reminder error:", e)
+
+        await asyncio.sleep(30)
+async def morning_loop():
+    while True:
+        try:
+            await send_morning_reports()
+        except Exception as e:
+            print("Morning error:", e)
+
+        await asyncio.sleep(60)
+async def send_morning_reports():
+    now = datetime.now()
+    current_time = now.strftime("%H:%M")
+    today = now.date().isoformat()
+    yesterday = (now.date() - timedelta(days=1)).isoformat()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+
+        async with db.execute("SELECT id, morning_time FROM users") as cur:
+            users = await cur.fetchall()
+
+        for user_id, morning_time in users:
+
+            if not morning_time:
+                continue
+
+            report_time = datetime.strptime(morning_time, "%H:%M").time()
+
+            if now.hour != report_time.hour or now.minute != report_time.minute:
+                 continue
+
+            # задачи на сегодня
+            async with db.execute("""
+                SELECT text, is_main
+                FROM tasks
+                WHERE user_id=? AND date=? AND done=0
+            """, (user_id, today)) as cur2:
+                tasks_today = await cur2.fetchall()
+
+            # прогресс вчера
+            async with db.execute("""
+                SELECT done
+                FROM tasks
+                WHERE user_id=? AND date=?
+            """, (user_id, yesterday)) as cur3:
+                tasks_yesterday = await cur3.fetchall()
+
+            total = len(tasks_yesterday)
+            done = sum(t[0] for t in tasks_yesterday)
+            progress = int((done / total) * 100) if total > 0 else 0
+
+            text = "☀️ Доброе утро!\n\n"
+
+            if tasks_today:
+                text += "Сегодня у вас:\n"
+                index = 1
+                for task_text, is_main in tasks_today:
+                    star = "⭐ " if is_main else ""
+                    text += f"{index}. {star}{task_text}\n"
+                    index += 1
+            else:
+                text += "Сегодня задач нет.\n"
+
+            text += f"\n📊 Прогресс вчера: {progress}%\n"
+            text += "\nПоехали 🔥"
+
+            await bot.send_message(user_id, text)
+async def send_evening_report_for_user(user_id):
+    now = datetime.now()
+    today = now.date().isoformat()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+
+        # 📊 считаем прогресс за день
+        async with db.execute("""
+            SELECT done FROM tasks
+            WHERE user_id=? AND date=?
+        """, (user_id, today)) as cur:
+            all_tasks = await cur.fetchall()
+
+        total = len(all_tasks)
+        done_count = sum(t[0] for t in all_tasks)
+        percent = int((done_count / total) * 100) if total > 0 else 0
+        filled = percent // 10
+        bar = "█" * filled + "░" * (10 - filled)
+        # 🎨 статус
+        if percent == 100 and total > 0:
+            status_emoji = "🏆"
+            status_text = "Идеально. Машина."
+        elif percent >= 75:
+            status_emoji = "🟩"
+            status_text = "Очень достойно."
+        elif percent >= 50:
+            status_emoji = "🟨"
+            status_text = "Неплохо."
+        elif percent >= 25:
+            status_emoji = "🟧"
+            status_text = "Разгон идёт."
+        else:
+            status_emoji = "🟥"
+            status_text = "Завтра реванш."
+
+        # получаем невыполненные
+        async with db.execute("""
+            SELECT id, text
+            FROM tasks
+            WHERE user_id=? AND date=? AND done=0
+        """, (user_id, today)) as cur2:
+            tasks = await cur2.fetchall()
+
+        text = (
+            f"🌙 Итоги дня\n\n"
+            f"{bar} {percent}% {status_emoji}\n"
+            f"{status_text}\n\n"
+        )
+
+        if not tasks:
+            await bot.send_message(
+                user_id,
+                text + "👏 Все задачи выполнены!"
+            )
+            return
+
+        text += "Невыполненные задачи:\n"
+
+        keyboard = []
+        index = 1
+
+        for task_id, task_text in tasks:
+            text += f"{index}. {task_text}\n"
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{index} ➡ Перенести",
+                    callback_data=f"move_{task_id}"
+                ),
+                InlineKeyboardButton(
+                    text=f"{index} 🗑 Удалить",
+                    callback_data=f"delete_{task_id}"
+                )
+            ])
+
+            index += 1
+            keyboard.append([
+                InlineKeyboardButton(
+                    text="➡ Перенести все",
+                    callback_data="move_all"
+                ),
+                InlineKeyboardButton(
+                 text="🗑 Очистить день",
+                 callback_data="delete_all"
+                )
+             ]) 
+        await bot.send_message(
+            user_id,
+            text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        )
+async def send_evening_reports():
+    now = datetime.now()
+    current_time = now.strftime("%H:%M")
+    today = now.date().isoformat()
+    tomorrow = (now.date() + timedelta(days=1)).isoformat()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+
+        async with db.execute("SELECT id, evening_time FROM users") as cur:
+            users = await cur.fetchall()
+
+        for user_id, evening_time in users:
+
+            if not evening_time:
+                continue
+
+            report_time = datetime.strptime(evening_time, "%H:%M").time()
+
+            if now.hour != report_time.hour or now.minute != report_time.minute:
+                continue
+            await send_evening_report_for_user(user_id)
+
+            async with db.execute("""
+                SELECT id, text
+                FROM tasks
+                WHERE user_id=? AND date=? AND done=0
+            """, (user_id, today)) as cur2:
+                tasks = await cur2.fetchall()
+
+            if not tasks:
+                await bot.send_message(
+                    user_id,
+                    "🌙 Отличная работа! Все задачи выполнены 👏"
+                )
+                continue
+
+            text = "🌙 Итоги дня\n\nНевыполненные задачи:\n"
+            keyboard = []
+
+            index = 1
+            for task_id, task_text in tasks:
+                text += f"{index}. {task_text}\n"
+
+                keyboard.append([
+                    InlineKeyboardButton(
+                        text=f"{index} ➡ Перенести",
+                        callback_data=f"move_{task_id}"
+                    ),
+                    InlineKeyboardButton(
+                        text=f"{index} 🗑 Удалить",
+                        callback_data=f"delete_{task_id}"
+                    )
+                ])
+
+                index += 1
+
+            await bot.send_message(
+                user_id,
+                text,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+            )
+async def evening_loop():
+    while True:
+        try:
+            await send_evening_reports()
+        except Exception as e:
+            print("Evening error:", e)
+
+        await asyncio.sleep(60)
+async def send_weekly_report():
+    now = datetime.now()
+
+    # отправляем в воскресенье в 19:00
+    if now.weekday() != 6 or now.hour != 19 or now.minute != 0:
+        return
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT id FROM users") as cur:
+            users = await cur.fetchall()
+
+        for (user_id,) in users:
+
+            week_start = (now.date() - timedelta(days=6))
+            week_start_iso = week_start.isoformat()
+
+            async with db.execute("""
+                SELECT date, done
+                FROM tasks
+                WHERE user_id=? AND date>=?
+            """, (user_id, week_start_iso)) as cur2:
+                tasks = await cur2.fetchall()
+
+            if not tasks:
+                continue
+
+            day_stats = {}
+            for task_date, done in tasks:
+                day_stats.setdefault(task_date, [0, 0])
+                day_stats[task_date][0] += 1
+                day_stats[task_date][1] += done
+
+            percentages = []
+            for date, (total, done_count) in day_stats.items():
+                percent = int((done_count / total) * 100)
+                percentages.append(percent)
+
+            avg = int(sum(percentages) / len(percentages))
+
+            best = max(percentages)
+            worst = min(percentages)
+
+            text = (
+                "📅 Итоги недели\n\n"
+                f"Средний прогресс: {avg}%\n"
+                f"Лучший день: {best}%\n"
+                f"Самый слабый день: {worst}%\n\n"
+                "Продолжаем рост 🚀"
+            )
+
+            await bot.send_message(user_id, text)
+async def send_weekly_report_for_user(user_id):
+    now = datetime.now()
+
+    async with aiosqlite.connect(DB_NAME) as db:
+
+        week_start = (now.date() - timedelta(days=6))
+        week_start_iso = week_start.isoformat()
+
+        async with db.execute("""
+            SELECT date, done
+            FROM tasks
+            WHERE user_id=? AND date>=?
+        """, (user_id, week_start_iso)) as cur:
+            tasks = await cur.fetchall()
+
+        if not tasks:
+            await bot.send_message(
+                user_id,
+                "📅 За последнюю неделю задач не было."
+            )
+            return
+
+        day_stats = {}
+        for task_date, done in tasks:
+            day_stats.setdefault(task_date, [0, 0])
+            day_stats[task_date][0] += 1
+            day_stats[task_date][1] += done
+
+        percentages = []
+        for date, (total, done_count) in day_stats.items():
+            percent = int((done_count / total) * 100)
+            percentages.append(percent)
+
+        avg = int(sum(percentages) / len(percentages))
+        best = max(percentages)
+        worst = min(percentages)
+
+        text = (
+            "📅 Итоги недели\n\n"
+            f"Средний прогресс: {avg}%\n"
+            f"Лучший день: {best}%\n"
+            f"Самый слабый день: {worst}%\n\n"
+            "Продолжаем рост 🚀"
+        )
+
+        await bot.send_message(user_id, text)
+async def weekly_loop():
+    while True:
+        try:
+            await send_weekly_report()
+        except Exception as e:
+            print("Weekly error:", e)
+
+        await asyncio.sleep(60)
+async def cleanup_old_tasks():
+    while True:
+        try:
+            cutoff_date = (datetime.now().date() - timedelta(days=14)).isoformat()
+
+            async with aiosqlite.connect(DB_NAME) as db:
+                await db.execute("""
+                    DELETE FROM tasks
+                    WHERE date < ?
+                """, (cutoff_date,))
+                await db.commit()
+
+        except Exception as e:
+            print("Cleanup error:", e)
+
+        # проверяем раз в сутки
+        await asyncio.sleep(86400)
+# ================= RUN =================
+
+async def main():
+    await init_db()
+
+    asyncio.create_task(reminder_loop())
+    asyncio.create_task(morning_loop())
+    asyncio.create_task(evening_loop())
+    asyncio.create_task(weekly_loop())
+    asyncio.create_task(cleanup_old_tasks())
+
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
