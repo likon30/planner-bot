@@ -305,23 +305,32 @@ async def save_timezone(message: Message, state: FSMContext):
 
 
 @dp.message(F.text == "📅 Мои задачи", StateFilter(None))
-    now = await get_user_now(message.from_user.id)
-    await send_dashboard(message.from_user.id, now.date().isoformat())
-    return
+async def choose_view(message: Message):
+    await message.answer("Выберите период:", reply_markup=view_menu())
+
 @dp.message(F.text == "Сегодня", StateFilter(None))
+async def view_today(message: Message):
     now = await get_user_now(message.from_user.id)
-    await send_dashboard(message.from_user.id, now.date().isoformat())
-    return
+    await send_dashboard(
+        message.from_user.id,
+        now.date().isoformat()
+    )
 
 @dp.message(F.text == "Завтра", StateFilter(None))
+async def view_tomorrow(message: Message):
     now = await get_user_now(message.from_user.id)
-    await send_dashboard(message.from_user.id, (now.date() + timedelta(days=1)).isoformat())
-    return
+    await send_dashboard(
+        message.from_user.id,
+        (now.date() + timedelta(days=1)).isoformat()
+    )
 
 @dp.message(F.text == "Неделя", StateFilter(None))
+async def view_week(message: Message):
     now = await get_user_now(message.from_user.id)
-    await send_dashboard(message.from_user.id, (now.date() + timedelta(days=7)).isoformat())
-    return
+    await send_dashboard(
+        message.from_user.id,
+        (now.date() + timedelta(days=7)).isoformat()
+    )
 
 
 @dp.message(F.text == "🔙 Назад")
@@ -1068,6 +1077,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
