@@ -639,30 +639,23 @@ async def check_reminders():
 
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("""
-            SELECT id, user_id, text, time, warned, notified
+            SELECT id, user_id, text, time, warned, notified, date
             FROM tasks
             WHERE time IS NOT NULL AND done=0
         """) as cur:
             tasks = await cur.fetchall()
 
-        for task_id, user_id, text, task_time, warned, notified in tasks:
+        for task_id, user_id, text, task_time, warned, notified, task_date in tasks:
 
-            # получаем offset пользователя
             offset = await get_user_offset(user_id)
             user_now = server_utc + timedelta(hours=offset)
             current_date = user_now.date().isoformat()
 
-            # если дата задачи не совпадает — пропускаем
-            async with db.execute(
-                "SELECT date FROM tasks WHERE id=?",
-                (task_id,)
-            ) as cur2:
-                row = await cur2.fetchone()
-                if not row or row[0] != current_date:
-                    continue
+            if task_date != current_date:
+                continue
 
             task_datetime = datetime.strptime(
-                f"{current_date} {task_time}",
+                f"{task_date} {task_time}",
                 "%Y-%m-%d %H:%M"
             )
 
@@ -1075,6 +1068,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
