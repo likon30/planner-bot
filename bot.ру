@@ -581,6 +581,13 @@ async def save_text(message: Message, state: FSMContext):
 @dp.message(AddTask.ask_time)
 async def handle_time_choice(message: Message, state: FSMContext):
 
+    data = await state.get_data()
+
+    if "date" not in data:
+        await state.clear()
+        await message.answer("Ошибка. Попробуйте добавить задачу заново.", reply_markup=main_menu())
+        return
+
     if message.text == "Без времени":
         data = await state.get_data()
 
@@ -710,10 +717,6 @@ async def morning_loop():
         await asyncio.sleep(60)
 async def send_morning_reports():
  
-    current_time = now.strftime("%H:%M")
-    today = now.date().isoformat()
-    yesterday = (now.date() - timedelta(days=1)).isoformat()
-
     async with aiosqlite.connect(DB_NAME) as db:
 
         async with db.execute("SELECT id, morning_time FROM users") as cur:
@@ -722,6 +725,11 @@ async def send_morning_reports():
         for user_id, morning_time in users:
             offset = await get_user_offset(user_id)
             now = datetime.utcnow() + timedelta(hours=offset)
+
+            current_time = now.strftime("%H:%M")
+            today = now.date().isoformat()
+            yesterday = (now.date() - timedelta(days=1)).isoformat()
+           
             if not morning_time:
                 continue
 
@@ -859,10 +867,6 @@ async def send_evening_report_for_user(user_id):
         )
 async def send_evening_reports():
     
-    current_time = now.strftime("%H:%M")
-    today = now.date().isoformat()
-    tomorrow = (now.date() + timedelta(days=1)).isoformat()
-
     async with aiosqlite.connect(DB_NAME) as db:
 
         async with db.execute("SELECT id, evening_time FROM users") as cur:
@@ -871,6 +875,10 @@ async def send_evening_reports():
         for user_id, evening_time in users:
             offset = await get_user_offset(user_id)
             now = datetime.utcnow() + timedelta(hours=offset)
+
+            current_time = now.strftime("%H:%M")
+            today = now.date().isoformat()
+            tomorrow = (now.date() + timedelta(days=1)).isoformat()
 
             if not evening_time:
                 continue
@@ -1067,6 +1075,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
