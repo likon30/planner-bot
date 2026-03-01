@@ -23,7 +23,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-DB_NAME = "/data/planner.db"
+DB_NAME = "planner.db"
 
 
 # ================= DATABASE =================
@@ -978,3 +978,4 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
