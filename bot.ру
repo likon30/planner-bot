@@ -303,7 +303,7 @@ async def save_timezone(message: Message, state: FSMContext):
         reply_markup=main_menu()
     )
 
-@dp.message(F.text == "📅 Мои задачи")
+@dp.message(F.text == "📅 Мои задачи", StateFilter(None))
 async def choose_view(message: Message):
     await message.answer("Выберите период:", reply_markup=view_menu())
 
@@ -585,9 +585,9 @@ async def handle_time_choice(message: Message, state: FSMContext):
 
     if message.text == "Без времени":
 
-        if "text" not in data or "date" not in data:
+        if not data.get("text") or not data.get("date"):
+            await message.answer("Ошибка состояния. Начните добавление заново.", reply_markup=main_menu())
             await state.clear()
-            await message.answer("Ошибка состояния. Попробуйте заново.", reply_markup=main_menu())
             return
 
         async with aiosqlite.connect(DB_NAME) as db:
@@ -1074,6 +1074,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
