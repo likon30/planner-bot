@@ -634,27 +634,39 @@ async def check_reminders():
         async with db.execute("""
             SELECT id, user_id, text, time, warned, notified
             FROM tasks
-            WHERE date=? AND time IS NOT NULL AND done=0
-        """, (current_date,)) as cur:
+            WHERE time IS NOT NULL AND done=0
+        """) as cur:
             tasks = await cur.fetchall()
 
         for task_id, user_id, text, task_time, warned, notified in tasks:
 
-            # Получаем настройку пользователя
-            async with db.execute(
-                "SELECT remind_before FROM users WHERE id=?",
-                (user_id,)
-            ) as cur2:
-                row = await cur2.fetchone()
-                remind_before = row[0] if row else 10
-
+            # получаем offset пользователя
             offset = await get_user_offset(user_id)
             user_now = server_utc + timedelta(hours=offset)
             current_date = user_now.date().isoformat()
+
+            # если дата задачи не совпадает — пропускаем
+            async with db.execute(
+                "SELECT date FROM tasks WHERE id=?",
+                (task_id,)
+            ) as cur2:
+                row = await cur2.fetchone()
+                if not row or row[0] != current_date:
+                    continue
+
+            task_datetime = datetime.strptime(
+                f"{current_date} {task_time}",
                 "%Y-%m-%d %H:%M"
             )
 
-            # 🔔 Предупреждение
+            # предупреждение
+            async with db.execute(
+                "SELECT remind_before FROM users WHERE id=?",
+                (user_id,)
+            ) as cur3:
+                row = await cur3.fetchone()
+                remind_before = row[0] if row else 10
+
             if not warned and user_now >= task_datetime - timedelta(minutes=remind_before):
                 await bot.send_message(
                     user_id,
@@ -665,7 +677,6 @@ async def check_reminders():
                     (task_id,)
                 )
 
-            # ⏰ Основное напоминание
             if not notified and user_now >= task_datetime:
                 await bot.send_message(
                     user_id,
@@ -1056,6 +1067,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
