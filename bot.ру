@@ -536,8 +536,8 @@ async def choose_day_add(message: Message, state: FSMContext):
         await message.answer("Главное меню", reply_markup=main_menu())
         return
 
-    now = await get_user_now(message.from_user.id)
-    await send_dashboard(message.from_user.id, now.date().isoformat())
+    await state.update_data(date=selected_date.isoformat())
+
     await state.set_state(AddTask.waiting_text)
     await message.answer("Введите текст задачи:", reply_markup=None)
 
@@ -1075,6 +1075,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
