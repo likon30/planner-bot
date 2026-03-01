@@ -303,27 +303,24 @@ async def save_timezone(message: Message, state: FSMContext):
         reply_markup=main_menu()
     )
 
-@dp.message(F.text == "📅 Мои задачи", StateFilter(None))
-async def choose_view(message: Message):
-    await message.answer("Выберите период:", reply_markup=view_menu())
+@dp.message(StateFilter(None))
+async def view_period(message: Message):
+    text = message.text
 
+    if text == "Сегодня":
+        now = await get_user_now(message.from_user.id)
+        await send_dashboard(message.from_user.id, now.date().isoformat())
+        return
 
-@dp.message(F.text == "Сегодня", StateFilter(None))
-async def view_today(message: Message):
-    now = await get_user_now(message.from_user.id)
-    await send_dashboard(message.from_user.id, now.date().isoformat())
+    if text == "Завтра":
+        now = await get_user_now(message.from_user.id)
+        await send_dashboard(message.from_user.id, (now.date() + timedelta(days=1)).isoformat())
+        return
 
-
-@dp.message(F.text == "Завтра", StateFilter(None))
-async def view_tomorrow(message: Message):
-    now = await get_user_now(message.from_user.id)
-    await send_dashboard(message.from_user.id, (now.date() + timedelta(days=1)).isoformat())
-
-
-@dp.message(F.text == "Завтра", StateFilter(None))
-async def view_week(message: Message):
-    now = await get_user_now(message.from_user.id)
-    await send_dashboard(message.from_user.id, (now.date() + timedelta(days=7)).isoformat())
+    if text == "Неделя":
+        now = await get_user_now(message.from_user.id)
+        await send_dashboard(message.from_user.id, (now.date() + timedelta(days=7)).isoformat())
+        return
 
 
 @dp.message(F.text == "🔙 Назад")
@@ -585,29 +582,26 @@ async def handle_time_choice(message: Message, state: FSMContext):
 
     if message.text == "Без времени":
 
-        if not data.get("text") or not data.get("date"):
-            await message.answer("Ошибка состояния. Начните добавление заново.", reply_markup=main_menu())
+        if not data:
             await state.clear()
+            await message.answer("Состояние сбилось. Начните заново.", reply_markup=main_menu())
             return
 
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
                 "INSERT INTO tasks (id, user_id, text, date) VALUES (?, ?, ?, ?)",
-                (str(uuid.uuid4()), message.from_user.id, data["text"], data["date"])
+                (str(uuid.uuid4()), message.from_user.id, data.get("text"), data.get("date"))
             )
             await db.commit()
 
         await state.clear()
-
-        await message.answer(
-            "Задача добавлена 👌",
-            reply_markup=main_menu()
-        )
+        await message.answer("Задача добавлена 👌", reply_markup=main_menu())
         return
 
     if message.text == "⏰ Да":
         await state.set_state(AddTask.waiting_time)
         await message.answer("Введите время HH:MM")
+        return
 
 
 @dp.message(AddTask.waiting_time)
@@ -1074,6 +1068,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
