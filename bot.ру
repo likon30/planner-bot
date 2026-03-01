@@ -16,6 +16,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from datetime import datetime, timedelta
 
 import os
 TOKEN = os.getenv("BOT_TOKEN")
@@ -168,7 +169,8 @@ class AddTask(StatesGroup):
     waiting_text = State()
     ask_time = State()
     waiting_time = State()
-
+class SetTimezone(StatesGroup):
+    waiting_time = State()
 
 # ================= START =================
 
@@ -182,7 +184,12 @@ async def start(message: Message):
         await db.commit()
 
     await message.answer("Planner v1.3 запущен 👌", reply_markup=main_menu())
+    await state.set_state(SetTimezone.waiting_time)
 
+    await message.answer(
+        "Напишите текущее время у вас в формате HH:MM\n"
+        "Например: 14:35"
+    )
 
 # ================= DASHBOARD =================
 
@@ -242,6 +249,43 @@ async def send_dashboard(chat_id, target_date):
 
 
 # ================= VIEW =================
+
+@dp.message(SetTimezone.waiting_time)
+async def save_timezone(message: Message, state: FSMContext):
+    try:
+        user_time = datetime.strptime(message.text.strip(), "%H:%M")
+    except ValueError:
+        await message.answer("Введите время в формате HH:MM\nНапример: 14:35")
+        return
+
+    server_utc = datetime.utcnow()
+
+    user_now = server_utc.replace(
+        hour=user_time.hour,
+        minute=user_time.minute,
+        second=0,
+        microsecond=0
+    )
+
+    if user_now < server_utc - timedelta(hours=12):
+        user_now += timedelta(days=1)
+    elif user_now > server_utc + timedelta(hours=12):
+        user_now -= timedelta(days=1)
+
+    offset = int((user_now - server_utc).total_seconds() // 3600)
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE users SET timezone_offset=? WHERE id=?",
+            (offset, message.from_user.id)
+        )
+        await db.commit()
+
+    await state.clear()
+    await message.answer(
+        f"Часовой пояс сохранён ✅ (UTC {offset:+})",
+        reply_markup=main_menu()
+    )
 
 @dp.message(F.text == "📅 Мои задачи")
 async def choose_view(message: Message):
@@ -987,6 +1031,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
