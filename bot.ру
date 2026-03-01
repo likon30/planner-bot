@@ -40,15 +40,15 @@ async def init_db():
             evening_time TEXT DEFAULT '21:00'
         )
         """)
-    async with db.execute("PRAGMA table_info(users)") as cur:
-        columns = await cur.fetchall()
+        async with db.execute("PRAGMA table_info(users)") as cur:
+            columns = await cur.fetchall()
 
-    column_names = [col[1] for col in columns]
+        column_names = [col[1] for col in columns]
 
-    if "timezone_offset" not in column_names:
-        await db.execute(
-            "ALTER TABLE users ADD COLUMN timezone_offset INTEGER DEFAULT 0"
-        )
+        if "timezone_offset" not in column_names:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN timezone_offset INTEGER DEFAULT 0"
+            )
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
@@ -987,5 +987,6 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
