@@ -274,19 +274,25 @@ async def save_timezone(message: Message, state: FSMContext):
         await message.answer("Введите время в формате HH:MM\nНапример: 14:35")
         return
 
-    server_utc = datetime.utcnow()
+   server_utc = datetime.utcnow()
 
-    user_now = server_utc.replace(
-        hour=user_time.hour,
-        minute=user_time.minute,
-        second=0,
-        microsecond=0
-    )
 
-    if user_now < server_utc - timedelta(hours=12):
-        user_now += timedelta(days=1)
-    elif user_now > server_utc + timedelta(hours=12):
-        user_now -= timedelta(days=1)
+    utc_minutes = server_utc.hour * 60 + server_utc.minute
+
+
+    user_minutes = user_time.hour * 60 + user_time.minute
+
+
+    delta_minutes = user_minutes - utc_minutes
+
+
+    if delta_minutes < -720:
+        delta_minutes += 1440
+    elif delta_minutes > 720:
+        delta_minutes -= 1440
+
+
+    offset = round(delta_minutes / 60)
 
     offset = int((user_now - server_utc).total_seconds() // 3600)
 
@@ -1068,6 +1074,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
