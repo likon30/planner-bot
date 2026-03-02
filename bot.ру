@@ -216,6 +216,8 @@ class AddTask(StatesGroup):
     ask_time = State()
     waiting_time = State()
 
+class SetTimezone(StatesGroup):
+    waiting_time = State()
 
 @dp.message(F.text == "➕ Добавить задачу")
 async def add_start(message: Message, state: FSMContext):
@@ -1010,6 +1012,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
