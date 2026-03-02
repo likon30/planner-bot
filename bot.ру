@@ -266,19 +266,19 @@ async def send_dashboard(chat_id, target_date):
 
 # ================= VIEW =================
 
-server_utc = datetime.utcnow()
+    server_utc = datetime.utcnow()
 
-   utc_minutes = server_utc.hour * 60 + server_utc.minute
-   user_minutes = user_time.hour * 60 + user_time.minute
+    utc_minutes = server_utc.hour * 60 + server_utc.minute
+    user_minutes = user_time.hour * 60 + user_time.minute
 
-   delta_minutes = user_minutes - utc_minutes
+    delta_minutes = user_minutes - utc_minutes
 
-   if delta_minutes < -720:
-       delta_minutes += 1440
-   elif delta_minutes > 720:
-       delta_minutes -= 1440
+    if delta_minutes < -720:
+        delta_minutes += 1440
+    elif delta_minutes > 720:
+        delta_minutes -= 1440
 
-   offset = round(delta_minutes / 60)
+    offset = round(delta_minutes / 60)
 
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
@@ -1058,6 +1058,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
