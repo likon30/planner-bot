@@ -85,6 +85,110 @@ async def get_user_offset(user_id: int):
 async def get_user_now(user_id: int):
     offset = await get_user_offset(user_id)
     return datetime.utcnow() + timedelta(hours=offset)
+
+# ================= ADD TASK =================
+
+class AddTask(StatesGroup):
+    choosing_day = State()
+    waiting_text = State()
+    ask_time = State()
+    waiting_time = State()
+
+class SetTimezone(StatesGroup):
+    waiting_time = State()
+
+@dp.message(F.text == "➕ Добавить задачу")
+async def add_start(message: Message, state: FSMContext):
+    await state.set_state(AddTask.choosing_day)
+    await message.answer("Выберите день:", reply_markup=day_menu())
+
+
+@dp.message(AddTask.choosing_day)
+async def choose_day_add(message: Message, state: FSMContext):
+
+    now = await get_user_now(message.from_user.id)
+    today = now.date()
+
+    if message.text == "📍 Сегодня":
+        selected_date = today
+    elif message.text == "📍 Завтра":
+        selected_date = today + timedelta(days=1)
+    elif message.text == "📍 На неделю":
+        selected_date = today + timedelta(days=7)
+    else:
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_menu())
+        return
+
+    await state.update_data(date=selected_date.isoformat())
+    await state.set_state(AddTask.waiting_text)
+
+    await message.answer("Введите текст задачи:", reply_markup=None)
+
+
+@dp.message(AddTask.waiting_text)
+async def save_text(message: Message, state: FSMContext):
+    await state.update_data(text=message.text)
+    await state.set_state(AddTask.ask_time)
+    await message.answer("Добавить напоминание ко времени?", reply_markup=remind_menu())
+
+
+@dp.message(AddTask.ask_time)
+async def handle_time_choice(message: Message, state: FSMContext):
+
+    data = await state.get_data()
+
+    if message.text == "Без времени":
+
+        conn = await get_db()
+
+        await conn.execute(
+            "INSERT INTO tasks (id, user_id, text, date) VALUES ($1, $2, $3, $4)",
+            str(uuid.uuid4()),
+            message.from_user.id,
+            data["text"],
+            data["date"]
+        )
+
+        await conn.close()
+
+        await state.clear()
+        await message.answer("Задача добавлена 👌", reply_markup=main_menu())
+        return
+
+    if message.text == "⏰ Да":
+        await state.set_state(AddTask.waiting_time)
+        await message.answer("Введите время HH:MM")
+        return
+
+
+@dp.message(AddTask.waiting_time)
+async def save_with_time(message: Message, state: FSMContext):
+    try:
+        datetime.strptime(message.text, "%H:%M")
+    except:
+        await message.answer("Формат HH:MM")
+        return
+
+    data = await state.get_data()
+
+    conn = await get_db()
+
+    await conn.execute(
+        "INSERT INTO tasks (id, user_id, text, date, time) VALUES ($1, $2, $3, $4, $5)",
+        str(uuid.uuid4()),
+        message.from_user.id,
+        data["text"],
+        data["date"],
+        message.text
+    )
+
+    await conn.close()
+
+    await state.clear()
+    await message.answer("Задача добавлена ⏰", reply_markup=main_menu())
+
+
 # ================= START =================
 
 @dp.message(Command("start"))
@@ -208,107 +312,7 @@ async def set_evening_time(message: Message):
         reply_markup=main_menu()
     )
 
-# ================= ADD TASK =================
 
-class AddTask(StatesGroup):
-    choosing_day = State()
-    waiting_text = State()
-    ask_time = State()
-    waiting_time = State()
-
-class SetTimezone(StatesGroup):
-    waiting_time = State()
-
-@dp.message(F.text == "➕ Добавить задачу")
-async def add_start(message: Message, state: FSMContext):
-    await state.set_state(AddTask.choosing_day)
-    await message.answer("Выберите день:", reply_markup=day_menu())
-
-
-@dp.message(AddTask.choosing_day)
-async def choose_day_add(message: Message, state: FSMContext):
-
-    now = await get_user_now(message.from_user.id)
-    today = now.date()
-
-    if message.text == "📍 Сегодня":
-        selected_date = today
-    elif message.text == "📍 Завтра":
-        selected_date = today + timedelta(days=1)
-    elif message.text == "📍 На неделю":
-        selected_date = today + timedelta(days=7)
-    else:
-        await state.clear()
-        await message.answer("Главное меню", reply_markup=main_menu())
-        return
-
-    await state.update_data(date=selected_date.isoformat())
-    await state.set_state(AddTask.waiting_text)
-
-    await message.answer("Введите текст задачи:", reply_markup=None)
-
-
-@dp.message(AddTask.waiting_text)
-async def save_text(message: Message, state: FSMContext):
-    await state.update_data(text=message.text)
-    await state.set_state(AddTask.ask_time)
-    await message.answer("Добавить напоминание ко времени?", reply_markup=remind_menu())
-
-
-@dp.message(AddTask.ask_time)
-async def handle_time_choice(message: Message, state: FSMContext):
-
-    data = await state.get_data()
-
-    if message.text == "Без времени":
-
-        conn = await get_db()
-
-        await conn.execute(
-            "INSERT INTO tasks (id, user_id, text, date) VALUES ($1, $2, $3, $4)",
-            str(uuid.uuid4()),
-            message.from_user.id,
-            data["text"],
-            data["date"]
-        )
-
-        await conn.close()
-
-        await state.clear()
-        await message.answer("Задача добавлена 👌", reply_markup=main_menu())
-        return
-
-    if message.text == "⏰ Да":
-        await state.set_state(AddTask.waiting_time)
-        await message.answer("Введите время HH:MM")
-        return
-
-
-@dp.message(AddTask.waiting_time)
-async def save_with_time(message: Message, state: FSMContext):
-    try:
-        datetime.strptime(message.text, "%H:%M")
-    except:
-        await message.answer("Формат HH:MM")
-        return
-
-    data = await state.get_data()
-
-    conn = await get_db()
-
-    await conn.execute(
-        "INSERT INTO tasks (id, user_id, text, date, time) VALUES ($1, $2, $3, $4, $5)",
-        str(uuid.uuid4()),
-        message.from_user.id,
-        data["text"],
-        data["date"],
-        message.text
-    )
-
-    await conn.close()
-
-    await state.clear()
-    await message.answer("Задача добавлена ⏰", reply_markup=main_menu())
 
 # ================= DASHBOARD =================
 
@@ -1012,6 +1016,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
