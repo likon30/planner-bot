@@ -266,6 +266,14 @@ async def send_dashboard(chat_id, target_date):
 
 # ================= VIEW =================
 
+@dp.message(SetTimezone.waiting_time)
+async def save_timezone(message: Message, state: FSMContext):
+    try:
+        user_time = datetime.strptime(message.text.strip(), "%H:%M")
+    except ValueError:
+        await message.answer("Введите время в формате HH:MM\nНапример: 14:35")
+        return
+
     server_utc = datetime.utcnow()
 
     utc_minutes = server_utc.hour * 60 + server_utc.minute
@@ -288,6 +296,7 @@ async def send_dashboard(chat_id, target_date):
         await db.commit()
 
     await state.clear()
+
     await message.answer(
         f"Часовой пояс сохранён ✅ (UTC {offset:+})",
         reply_markup=main_menu()
@@ -1058,6 +1067,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
